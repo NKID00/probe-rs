@@ -117,7 +117,7 @@ impl Cli {
             Subcommand::Serve(cmd) => cmd.run(_config.server).await,
             Subcommand::List(cmd) => cmd.run(client).await,
             Subcommand::Info(cmd) => cmd.run(client).await,
-            Subcommand::Gdb(cmd) => cmd.run(&mut *client.registry().await, &lister).await,
+            Subcommand::Gdb(cmd) => cmd.run(&mut *client.registry().await, &lister),
             Subcommand::Reset(cmd) => cmd.run(client).await,
             Subcommand::Debug(cmd) => {
                 cmd.run(&mut *client.registry().await, &lister, utc_offset)
@@ -128,14 +128,14 @@ impl Cli {
             Subcommand::Attach(cmd) => cmd.run(client, utc_offset).await,
             Subcommand::Verify(cmd) => cmd.run(client).await,
             Subcommand::Erase(cmd) => cmd.run(client).await,
-            Subcommand::Trace(cmd) => cmd.run(&mut *client.registry().await, &lister).await,
-            Subcommand::Itm(cmd) => cmd.run(&mut *client.registry().await, &lister).await,
+            Subcommand::Trace(cmd) => cmd.run(&mut *client.registry().await, &lister),
+            Subcommand::Itm(cmd) => cmd.run(&mut *client.registry().await, &lister),
             Subcommand::Chip(cmd) => cmd.run(client).await,
-            Subcommand::Benchmark(cmd) => cmd.run(&mut *client.registry().await, &lister).await,
-            Subcommand::Profile(cmd) => cmd.run(&mut *client.registry().await, &lister).await,
+            Subcommand::Benchmark(cmd) => cmd.run(&mut *client.registry().await, &lister),
+            Subcommand::Profile(cmd) => cmd.run(&mut *client.registry().await, &lister),
             Subcommand::Read(cmd) => cmd.run(client).await,
             Subcommand::Write(cmd) => cmd.run(client).await,
-            Subcommand::Complete(cmd) => cmd.run(&lister).await,
+            Subcommand::Complete(cmd) => cmd.run(&lister),
             Subcommand::Mi(cmd) => cmd.run(),
         }
     }
@@ -412,16 +412,16 @@ fn prune_logs(directory: &Path) -> Result<(), anyhow::Error> {
 /// (cli, cargo-flash, cargo-embed, etc.)
 fn multicall_check<'list>(args: &'list [OsString], want: &str) -> Option<&'list [OsString]> {
     let argv0 = Path::new(&args[0]);
-    if let Some(command) = argv0.file_stem().and_then(|f| f.to_str()) {
-        if command == want {
-            return Some(args);
-        }
+    if let Some(command) = argv0.file_stem().and_then(|f| f.to_str())
+        && command == want
+    {
+        return Some(args);
     }
 
-    if let Some(command) = args.get(1).and_then(|f| f.to_str()) {
-        if command == want {
-            return Some(&args[1..]);
-        }
+    if let Some(command) = args.get(1).and_then(|f| f.to_str())
+        && command == want
+    {
+        return Some(&args[1..]);
     }
 
     None
@@ -439,7 +439,7 @@ async fn main() -> Result<()> {
 
     // Special-case `cargo-embed` and `cargo-flash`.
     if let Some(args) = multicall_check(&args, "cargo-flash") {
-        cmd::cargo_flash::main(args).await;
+        cmd::cargo_flash::main(args);
         return Ok(());
     }
     if let Some(args) = multicall_check(&args, "cargo-embed") {
@@ -567,7 +567,7 @@ fn apply_config_preset(
                 }
             }
             Value::Bool(_, _) => {}
-            _ => anyhow::bail!("Unsupported value: {:?}", value),
+            _ => anyhow::bail!("Unsupported value: {value:?}"),
         }
     }
 

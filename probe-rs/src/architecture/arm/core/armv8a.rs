@@ -26,6 +26,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+const OPERATION_TIMEOUT: Duration = Duration::from_millis(250);
+
 /// Errors for the ARMv8-A state machine
 #[derive(thiserror::Error, Debug)]
 pub enum Armv8aError {
@@ -131,7 +133,11 @@ impl<'probe> Armv8a<'probe> {
         let address = Edscr::get_mmio_address_from_base(self.base_address)?;
         let mut edscr = Edscr(self.memory.read_word_32(address)?);
 
+        let start = Instant::now();
         while !edscr.ite() {
+            if start.elapsed() > OPERATION_TIMEOUT {
+                return Err(Error::Arm(ArmError::Timeout));
+            }
             edscr = Edscr(self.memory.read_word_32(address)?);
         }
 
@@ -155,7 +161,11 @@ impl<'probe> Armv8a<'probe> {
         let mut edscr = self.execute_instruction(instruction)?;
 
         // Wait for TXfull
+        let start = Instant::now();
         while !edscr.txfull() {
+            if start.elapsed() > OPERATION_TIMEOUT {
+                return Err(Error::Timeout);
+            }
             let address = Edscr::get_mmio_address_from_base(self.base_address)?;
             edscr = Edscr(self.memory.read_word_32(address)?);
         }
@@ -173,7 +183,11 @@ impl<'probe> Armv8a<'probe> {
         let mut edscr = self.execute_instruction(instruction)?;
 
         // Wait for TXfull
+        let start = Instant::now();
         while !edscr.txfull() {
+            if start.elapsed() > OPERATION_TIMEOUT {
+                return Err(Error::Timeout);
+            }
             let address = Edscr::get_mmio_address_from_base(self.base_address)?;
             edscr = Edscr(self.memory.read_word_32(address)?);
         }
@@ -201,7 +215,11 @@ impl<'probe> Armv8a<'probe> {
         let address = Edscr::get_mmio_address_from_base(self.base_address)?;
         let mut edscr = Edscr(self.memory.read_word_32(address)?);
 
+        let start = Instant::now();
         while !edscr.rxfull() {
+            if start.elapsed() > OPERATION_TIMEOUT {
+                return Err(Error::Timeout);
+            }
             edscr = Edscr(self.memory.read_word_32(address)?);
         }
 
@@ -230,7 +248,11 @@ impl<'probe> Armv8a<'probe> {
         let address = Edscr::get_mmio_address_from_base(self.base_address)?;
         let mut edscr = Edscr(self.memory.read_word_32(address)?);
 
+        let start = Instant::now();
         while !edscr.rxfull() {
+            if start.elapsed() > OPERATION_TIMEOUT {
+                return Err(Error::Timeout);
+            }
             edscr = Edscr(self.memory.read_word_32(address)?);
         }
 
@@ -252,53 +274,53 @@ impl<'probe> Armv8a<'probe> {
     }
 
     fn writeback_registers_aarch32(&mut self) -> Result<(), Error> {
-        // Update SP, PC, CPSR first since they clobber the GP registeres
+        // Update SP, PC, CPSR first since they clobber the GP registers
         let writeback_iter = (15u16..=16).chain(17u16..=48).chain(0u16..=14);
 
         for i in writeback_iter {
-            if let Some((val, writeback)) = self.state.register_cache[i as usize] {
-                if writeback {
-                    match i {
-                        0..=14 => {
-                            let instruction = build_mrc(14, 0, i, 0, 5, 0);
+            if let Some((val, writeback)) = self.state.register_cache[i as usize]
+                && writeback
+            {
+                match i {
+                    0..=14 => {
+                        let instruction = build_mrc(14, 0, i, 0, 5, 0);
 
-                            self.execute_instruction_with_input_32(instruction, val.try_into()?)?;
-                        }
-                        15 => {
-                            // Move val to r0
-                            let instruction = build_mrc(14, 0, 0, 0, 5, 0);
+                        self.execute_instruction_with_input_32(instruction, val.try_into()?)?;
+                    }
+                    15 => {
+                        // Move val to r0
+                        let instruction = build_mrc(14, 0, 0, 0, 5, 0);
 
-                            self.execute_instruction_with_input_32(instruction, val.try_into()?)?;
+                        self.execute_instruction_with_input_32(instruction, val.try_into()?)?;
 
-                            // Arm A-profile Architecture Registers
-                            //   AArch32 Registers
-                            //     DLR, Debug Link Register
-                            //
-                            // In Debug state, holds the address to restart from.
-                            //
-                            // https://developer.arm.com/documentation/ddi0601/2025-03/AArch32-Registers/DLR--Debug-Link-Register
-                            let instruction = build_mcr(15, 3, 0, 4, 5, 1);
-                            self.execute_instruction(instruction)?;
-                        }
-                        17..=48 => {
-                            // Move value to r0, r1
-                            let value: u64 = val.try_into()?;
-                            let low_word = value as u32;
-                            let high_word = (value >> 32) as u32;
+                        // Arm A-profile Architecture Registers
+                        //   AArch32 Registers
+                        //     DLR, Debug Link Register
+                        //
+                        // In Debug state, holds the address to restart from.
+                        //
+                        // https://developer.arm.com/documentation/ddi0601/2025-03/AArch32-Registers/DLR--Debug-Link-Register
+                        let instruction = build_mcr(15, 3, 0, 4, 5, 1);
+                        self.execute_instruction(instruction)?;
+                    }
+                    17..=48 => {
+                        // Move value to r0, r1
+                        let value: u64 = val.try_into()?;
+                        let low_word = value as u32;
+                        let high_word = (value >> 32) as u32;
 
-                            let instruction = build_mrc(14, 0, 0, 0, 5, 0);
-                            self.execute_instruction_with_input_32(instruction, low_word)?;
+                        let instruction = build_mrc(14, 0, 0, 0, 5, 0);
+                        self.execute_instruction_with_input_32(instruction, low_word)?;
 
-                            let instruction = build_mrc(14, 0, 1, 0, 5, 0);
-                            self.execute_instruction_with_input_32(instruction, high_word)?;
+                        let instruction = build_mrc(14, 0, 1, 0, 5, 0);
+                        self.execute_instruction_with_input_32(instruction, high_word)?;
 
-                            // VMOV
-                            let instruction = build_vmov(0, 0, 1, i - 17);
-                            self.execute_instruction(instruction)?;
-                        }
-                        _ => {
-                            panic!("Logic missing for writeback of register {i}");
-                        }
+                        // VMOV
+                        let instruction = build_vmov(0, 0, 1, i - 17);
+                        self.execute_instruction(instruction)?;
+                    }
+                    _ => {
+                        panic!("Logic missing for writeback of register {i}");
                     }
                 }
             }
@@ -308,52 +330,52 @@ impl<'probe> Armv8a<'probe> {
     }
 
     fn writeback_registers_aarch64(&mut self) -> Result<(), Error> {
-        // Update SP, PC, CPSR, FP first since they clobber the GP registeres
+        // Update SP, PC, CPSR, FP first since they clobber the GP registers
         let writeback_iter = (31u16..=33).chain(34u16..=65).chain(0u16..=30);
 
         for i in writeback_iter {
-            if let Some((val, writeback)) = self.state.register_cache[i as usize] {
-                if writeback {
-                    match i {
-                        0..=30 => {
-                            self.set_reg_value(i, val.try_into()?)?;
-                        }
-                        31 => {
-                            // Move val to r0
-                            self.set_reg_value(0, val.try_into()?)?;
+            if let Some((val, writeback)) = self.state.register_cache[i as usize]
+                && writeback
+            {
+                match i {
+                    0..=30 => {
+                        self.set_reg_value(i, val.try_into()?)?;
+                    }
+                    31 => {
+                        // Move val to r0
+                        self.set_reg_value(0, val.try_into()?)?;
 
-                            // MSR SP_EL0, X0
-                            let instruction = aarch64::build_msr(3, 0, 4, 1, 0, 0);
-                            self.execute_instruction(instruction)?;
-                        }
-                        32 => {
-                            // Move val to r0
-                            self.set_reg_value(0, val.try_into()?)?;
+                        // MSR SP_EL0, X0
+                        let instruction = aarch64::build_msr(3, 0, 4, 1, 0, 0);
+                        self.execute_instruction(instruction)?;
+                    }
+                    32 => {
+                        // Move val to r0
+                        self.set_reg_value(0, val.try_into()?)?;
 
-                            // MSR DLR_EL0, X0
-                            let instruction = aarch64::build_msr(3, 3, 4, 5, 1, 0);
-                            self.execute_instruction(instruction)?;
-                        }
-                        34..=65 => {
-                            let val: u128 = val.try_into()?;
+                        // MSR DLR_EL0, X0
+                        let instruction = aarch64::build_msr(3, 3, 4, 5, 1, 0);
+                        self.execute_instruction(instruction)?;
+                    }
+                    34..=65 => {
+                        let val: u128 = val.try_into()?;
 
-                            // Move lower word to r0
-                            self.set_reg_value(0, val as u64)?;
+                        // Move lower word to r0
+                        self.set_reg_value(0, val as u64)?;
 
-                            // INS v<x>.d[0], x0
-                            let instruction = aarch64::build_ins_gp_to_fp(i - 34, 0, 0);
-                            self.execute_instruction(instruction)?;
+                        // INS v<x>.d[0], x0
+                        let instruction = aarch64::build_ins_gp_to_fp(i - 34, 0, 0);
+                        self.execute_instruction(instruction)?;
 
-                            // Move upper word to r0
-                            self.set_reg_value(0, (val >> 64) as u64)?;
+                        // Move upper word to r0
+                        self.set_reg_value(0, (val >> 64) as u64)?;
 
-                            // INS v<x>.d[0], x0
-                            let instruction = aarch64::build_ins_gp_to_fp(i - 34, 0, 1);
-                            self.execute_instruction(instruction)?;
-                        }
-                        _ => {
-                            panic!("Logic missing for writeback of register {i}");
-                        }
+                        // INS v<x>.d[0], x0
+                        let instruction = aarch64::build_ins_gp_to_fp(i - 34, 0, 1);
+                        self.execute_instruction(instruction)?;
+                    }
+                    _ => {
+                        panic!("Logic missing for writeback of register {i}");
                     }
                 }
             }
@@ -377,7 +399,10 @@ impl<'probe> Armv8a<'probe> {
 
     /// Save register if needed before it gets clobbered by instruction execution
     fn prepare_for_clobber(&mut self, reg: u16) -> Result<(), Error> {
-        if self.state.register_cache[reg as usize].is_none() {
+        if let Some(val) = &mut self.state.register_cache[reg as usize] {
+            // Mark reg as needing writeback
+            val.1 = true;
+        } else {
             // cache reg since we're going to clobber it
             let val = self.read_core_reg(RegisterId(reg))?;
 
@@ -410,12 +435,16 @@ impl<'probe> Armv8a<'probe> {
         let address = CtiIntack::get_mmio_address_from_base(self.cti_address)?;
         self.memory.write_word_32(address, ack.into())?;
 
+        let start = Instant::now();
         loop {
             let address = CtiTrigoutstatus::get_mmio_address_from_base(self.cti_address)?;
             let trig_status = CtiTrigoutstatus(self.memory.read_word_32(address)?);
 
             if trig_status.status(0) == 0 {
                 break;
+            }
+            if start.elapsed() > OPERATION_TIMEOUT {
+                return Err(Error::Timeout);
             }
         }
 
@@ -517,22 +546,8 @@ impl<'probe> Armv8a<'probe> {
                 // SP
                 self.prepare_for_clobber(0)?;
 
-                // MRS SP_EL0, X0
+                // MRS X0, SP_EL0
                 let instruction = aarch64::build_mrs(3, 0, 4, 1, 0, 0);
-                self.execute_instruction(instruction)?;
-
-                // Read from x0
-                let instruction = aarch64::build_msr(2, 3, 0, 4, 0, 0);
-                let pc = self.execute_instruction_with_result_64(instruction)?;
-
-                Ok(pc.into())
-            }
-            32 => {
-                // PC, must access via x0
-                self.prepare_for_clobber(0)?;
-
-                // MRS DLR_EL0, X0
-                let instruction = aarch64::build_mrs(3, 3, 4, 5, 1, 0);
                 self.execute_instruction(instruction)?;
 
                 // Read from x0
@@ -541,11 +556,25 @@ impl<'probe> Armv8a<'probe> {
 
                 Ok(sp.into())
             }
+            32 => {
+                // PC, must access via x0
+                self.prepare_for_clobber(0)?;
+
+                // MRS X0, DLR_EL0
+                let instruction = aarch64::build_mrs(3, 3, 4, 5, 1, 0);
+                self.execute_instruction(instruction)?;
+
+                // Read from x0
+                let instruction = aarch64::build_msr(2, 3, 0, 4, 0, 0);
+                let pc = self.execute_instruction_with_result_64(instruction)?;
+
+                Ok(pc.into())
+            }
             33 => {
                 // PSR
                 self.prepare_for_clobber(0)?;
 
-                // MRS DSPSR_EL0, X0
+                // MRS X0, DSPSR_EL0
                 let instruction = aarch64::build_mrs(3, 3, 4, 5, 0, 0);
                 self.execute_instruction(instruction)?;
 
@@ -581,7 +610,7 @@ impl<'probe> Armv8a<'probe> {
                 // FPSR
                 self.prepare_for_clobber(0)?;
 
-                // MRS FPSR, X0
+                // MRS X0, FPSR
                 let instruction = aarch64::build_mrs(3, 3, 4, 4, 1, 0);
                 self.execute_instruction(instruction)?;
 
@@ -595,15 +624,15 @@ impl<'probe> Armv8a<'probe> {
                 // FPCR
                 self.prepare_for_clobber(0)?;
 
-                // MRS FPCR, X0
+                // MRS X0, FPCR
                 let instruction = aarch64::build_mrs(3, 3, 4, 4, 0, 0);
                 self.execute_instruction(instruction)?;
 
                 // Read from x0
                 let instruction = aarch64::build_msr(2, 3, 0, 4, 0, 0);
-                let fpsr: u32 = self.execute_instruction_with_result_64(instruction)? as u32;
+                let fpcr: u32 = self.execute_instruction_with_result_64(instruction)? as u32;
 
-                Ok(fpsr.into())
+                Ok(fpcr.into())
             }
             _ => Err(Error::Arm(
                 Armv8aError::InvalidRegisterNumber(reg_num, 64).into(),
@@ -630,6 +659,8 @@ impl<'probe> Armv8a<'probe> {
         result
     }
 
+    /// This function enables EDSCR.MA=1, which allows direct memory access via debug instructions.
+    /// With EDSCR.MA=1, any write to DBGDTRRX / read to DBGDTRTX break the x0,x1 registers
     fn with_memory_access_mode<F, R>(&mut self, f: F) -> Result<R, Error>
     where
         F: FnOnce(&mut Self) -> Result<R, Error>,
@@ -742,7 +773,7 @@ impl<'probe> Armv8a<'probe> {
             armv8a.prepare_for_clobber(0)?;
             armv8a.prepare_for_clobber(1)?;
 
-            // Load x0 with the address to write to
+            // Load r0 with the address to write to
             armv8a.set_reg_value(0, address.into())?;
             armv8a.set_reg_value(1, data.into())?;
 
@@ -754,34 +785,13 @@ impl<'probe> Armv8a<'probe> {
         })
     }
 
-    fn write_cpu_memory_aarch64_bytes(&mut self, address: u64, data: &[u8]) -> Result<(), Error> {
-        self.with_core_halted(|armv8a| {
-            // Save r0, r1
-            armv8a.prepare_for_clobber(0)?;
-            armv8a.prepare_for_clobber(1)?;
-
-            // Load x0 with the address to write to
-            armv8a.set_reg_value(0, address)?;
-
-            for d in data {
-                armv8a.set_reg_value(1, u64::from(*d))?;
-
-                // Write data to memory - STRB w1, [r0], #1
-                let instruction = aarch64::build_strb(1, 0, 4);
-
-                armv8a.execute_instruction(instruction)?;
-            }
-            Ok(())
-        })
-    }
-
     fn write_cpu_memory_aarch64_32(&mut self, address: u64, data: u32) -> Result<(), Error> {
         self.with_core_halted(|armv8a| {
             // Save x0, x1
             armv8a.prepare_for_clobber(0)?;
             armv8a.prepare_for_clobber(1)?;
 
-            // Load r0 with the address to write to
+            // Load x0 with the address to write to
             armv8a.set_reg_value(0, address)?;
             armv8a.set_reg_value(1, data.into())?;
 
@@ -799,7 +809,7 @@ impl<'probe> Armv8a<'probe> {
             armv8a.prepare_for_clobber(0)?;
             armv8a.prepare_for_clobber(1)?;
 
-            // Load r0 with the address to write to
+            // Load x0 with the address to write to
             armv8a.set_reg_value(0, address)?;
             armv8a.set_reg_value(1, data)?;
 
@@ -820,41 +830,39 @@ impl<'probe> Armv8a<'probe> {
         Ok(())
     }
 
-    fn write_cpu_memory_aarch64_fast(&mut self, address: u64, data: &[u8]) -> Result<(), Error> {
+    fn write_cpu_memory_fast(&mut self, address: u64, data: &[u8]) -> Result<(), Error> {
         self.with_core_halted(|armv8a| {
             let (prefix, aligned, suffix) = armv8a.aligned_to_32(address, data);
             let mut address = address;
 
             // write unaligned part
-            if !prefix.is_empty() {
-                armv8a.write_cpu_memory_aarch64_bytes(address, prefix)?;
-                address += u64::try_from(prefix.len()).unwrap();
+            for d in prefix {
+                armv8a.write_word_8(address, *d)?;
+                address += 1;
             }
 
             // write aligned part
-            armv8a.write_cpu_memory_aarch64_fast_inner(address, aligned)?;
+            armv8a.write_cpu_memory_fast_inner(address, aligned)?;
             address += u64::try_from(aligned.len()).unwrap();
 
             // write unaligned part
-            if !suffix.is_empty() {
-                armv8a.write_cpu_memory_aarch64_bytes(address, suffix)?;
+            for d in suffix {
+                armv8a.write_word_8(address, *d)?;
+                address += 1;
             }
+
             Ok(())
         })
     }
 
     /// Fast data download method
     /// ref. ARM DDI 0487D.a, K9-7312, Figure K9-1 Fast data download in AArch64 state
-    fn write_cpu_memory_aarch64_fast_inner(
-        &mut self,
-        address: u64,
-        data: &[u8],
-    ) -> Result<(), Error> {
-        // assume only call from write_cpu_memory_aarch64_fast
+    fn write_cpu_memory_fast_inner(&mut self, address: u64, data: &[u8]) -> Result<(), Error> {
+        // assume only call from write_cpu_memory_fast
         if data.is_empty() {
             return Ok(());
         }
-        if data.len() % 4 != 0 || address % 4 != 0 {
+        if !data.len().is_multiple_of(4) || !address.is_multiple_of(4) {
             return Err(MemoryNotAlignedError {
                 address,
                 alignment: 4,
@@ -862,16 +870,25 @@ impl<'probe> Armv8a<'probe> {
             .into());
         }
 
-        // Save x0
+        // ref. ARM DDI 0600B.a shared/debug/dccanditr/DBGDTRRX_EL0 pseudocode
+        // x0/r0 will be used for the address, and x1/r1 is clobbered.
         self.prepare_for_clobber(0)?;
+        self.prepare_for_clobber(1)?;
 
-        // Load r0 with the address to write to
+        // Load x0/r0 with the address to write to.
         self.set_reg_value(0, address)?;
 
         self.with_memory_access_mode(|armv8a| {
             for d in data.chunks(4) {
                 let word = u32::from_le_bytes([d[0], d[1], d[2], d[3]]);
                 // memory write loop
+                // With EDSCR.MA=1, any write to DBGDTRRX turns into:
+                // AArch64:
+                //  "MRS X1,DBGDTRRX_EL0"
+                //  "STR W1,[X0],#4"
+                // AArch32:
+                //  "MRS R1,DBGDTRRXint"
+                //  "STR R1,[R0],#4"
                 let dbgdtr_rx_address = Dbgdtrrx::get_mmio_address_from_base(armv8a.base_address)?;
                 armv8a.memory.write_word_32(dbgdtr_rx_address, word)?;
             }
@@ -967,7 +984,7 @@ impl<'probe> Armv8a<'probe> {
         if data.is_empty() {
             return Ok(());
         }
-        if data.len() % 4 != 0 || address % 4 != 0 {
+        if !data.len().is_multiple_of(4) || !address.is_multiple_of(4) {
             return Err(MemoryNotAlignedError {
                 address,
                 alignment: 4,
@@ -975,8 +992,10 @@ impl<'probe> Armv8a<'probe> {
             .into());
         }
 
-        // Save x0
+        // ref. ARM DDI 0600B.a shared/debug/dccanditr/DBGDTRRX_EL0 pseudocode
+        // x0/r0 will be used for the address, and x1/r1 is clobbered.
         self.prepare_for_clobber(0)?;
+        self.prepare_for_clobber(1)?;
 
         // Load x0 with the address to read from
         self.set_reg_value(0, address)?;
@@ -988,13 +1007,21 @@ impl<'probe> Armv8a<'probe> {
 
         // wait for TXfull == 1
         let edscr_address = Edscr::get_mmio_address_from_base(self.base_address)?;
-        while !{ Edscr(self.memory.read_word_32(edscr_address)?) }.txfull() {}
+        let start = Instant::now();
+        while !{
+            if start.elapsed() > OPERATION_TIMEOUT {
+                return Err(Error::Timeout);
+            }
+            Edscr(self.memory.read_word_32(edscr_address)?)
+        }
+        .txfull()
+        {}
 
         let dbgdtr_tx_address = Dbgdtrtx::get_mmio_address_from_base(self.base_address)?;
         let (data, last) = data.split_at_mut(data.len() - std::mem::size_of::<u32>());
 
         self.with_memory_access_mode(|armv8a| {
-            // discard firtst 32bit
+            // discard first 32bit
             let _ = armv8a.memory.read_word_32(dbgdtr_tx_address)?;
             for d in data.chunks_mut(4) {
                 // memory read loop
@@ -1144,10 +1171,14 @@ impl CoreInterface for Armv8a<'_> {
         // Wait for ack
         let address = Edprsr::get_mmio_address_from_base(self.base_address)?;
 
+        let start = Instant::now();
         loop {
             let edprsr = Edprsr(self.memory.read_word_32(address)?);
             if edprsr.sdr() {
                 break;
+            }
+            if start.elapsed() > OPERATION_TIMEOUT {
+                return Err(Error::Timeout);
             }
         }
 
@@ -1248,10 +1279,10 @@ impl CoreInterface for Armv8a<'_> {
         let reg_num = address.0;
 
         // check cache
-        if (reg_num as usize) < self.state.register_cache.len() {
-            if let Some(cached_result) = self.state.register_cache[reg_num as usize] {
-                return Ok(cached_result.0);
-            }
+        if (reg_num as usize) < self.state.register_cache.len()
+            && let Some(cached_result) = self.state.register_cache[reg_num as usize]
+        {
+            return Ok(cached_result.0);
         }
 
         let result = if self.state.is_64_bit {
@@ -1628,53 +1659,29 @@ impl MemoryInterface for Armv8a<'_> {
     }
 
     fn write_64(&mut self, address: u64, data: &[u64]) -> Result<(), Error> {
-        if self.state.is_64_bit {
-            let (_prefix, data, _suffix) = unsafe { data.align_to::<u8>() };
-            self.write_cpu_memory_aarch64_fast(address, data)?;
-        } else {
-            for (i, word) in data.iter().enumerate() {
-                self.write_word_64(address + ((i as u64) * 8), *word)?;
-            }
-        }
+        // Note that the fast write path splits data into 32-bit words and does not guarantee 64-bit bus accesses.
+        let (_prefix, data, _suffix) = unsafe { data.align_to::<u8>() };
+        self.write_cpu_memory_fast(address, data)?;
 
         Ok(())
     }
 
     fn write_32(&mut self, address: u64, data: &[u32]) -> Result<(), Error> {
-        if self.state.is_64_bit {
-            let (_prefix, data, _suffix) = unsafe { data.align_to::<u8>() };
-            self.write_cpu_memory_aarch64_fast(address, data)?;
-        } else {
-            for (i, word) in data.iter().enumerate() {
-                self.write_word_32(address + ((i as u64) * 4), *word)?;
-            }
-        }
+        let (_prefix, data, _suffix) = unsafe { data.align_to::<u8>() };
+        self.write_cpu_memory_fast(address, data)?;
 
         Ok(())
     }
 
     fn write_16(&mut self, address: u64, data: &[u16]) -> Result<(), Error> {
-        if self.state.is_64_bit {
-            let (_prefix, data, _suffix) = unsafe { data.align_to::<u8>() };
-            self.write_cpu_memory_aarch64_fast(address, data)?;
-        } else {
-            for (i, word) in data.iter().enumerate() {
-                self.write_word_16(address + ((i as u64) * 2), *word)?;
-            }
-        }
+        let (_prefix, data, _suffix) = unsafe { data.align_to::<u8>() };
+        self.write_cpu_memory_fast(address, data)?;
 
         Ok(())
     }
 
     fn write_8(&mut self, address: u64, data: &[u8]) -> Result<(), Error> {
-        if self.state.is_64_bit {
-            self.write_cpu_memory_aarch64_fast(address, data)?;
-        } else {
-            for (i, byte) in data.iter().enumerate() {
-                tracing::info!("writing {:?} bytes", i);
-                self.write_word_8(address + (i as u64), *byte)?;
-            }
-        }
+        self.write_cpu_memory_fast(address, data)?;
 
         Ok(())
     }

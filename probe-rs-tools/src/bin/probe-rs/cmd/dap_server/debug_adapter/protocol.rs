@@ -313,7 +313,7 @@ impl<R: Read, W: Write> DapAdapter<R, W> {
             Ok(None) => Ok(None),
             Err(error) => {
                 // This is a legitimate error. Tell the client about it.
-                Err(DebuggerError::Other(anyhow!("{}", error)))
+                Err(DebuggerError::Other(anyhow!("{error}")))
             }
         }
     }

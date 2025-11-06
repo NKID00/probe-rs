@@ -27,8 +27,6 @@ remote = [
 
 [dependencies]
 anyhow = { workspace = true }
-async-io.workspace = true
-async-trait.workspace = true
 base64 = "0.22"
 docsplay = { workspace = true }
 jep106 = "0.3"
@@ -38,7 +36,7 @@ serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 thiserror = { workspace = true }
 tracing = "0.1"
-typed-path = "0.11"
+typed-path = "0.12"
 probe-rs-mi = { workspace = true }
 
 itertools = "0.14"
@@ -47,7 +45,7 @@ itertools = "0.14"
 addr2line = "0.25"
 bytesize = "2"
 capstone = "0.13"
-cargo_metadata = "0.21"
+cargo_metadata = "0.23"
 clap = { version = "4", features = ["derive", "env"] }
 colored = "3"
 defmt-decoder = "1.0"
@@ -67,7 +65,7 @@ itm = { version = "0.9.0-rc.1", default-features = false }
 parse_int = "0.9"
 libtest-mimic = "0.8.0"
 fastrand = "2.1"
-rustyline = { version = "16", default-features = false, features = [
+rustyline = { version = "17", default-features = false, features = [
     "with-dirs",
     "with-file-history",
 ] }
@@ -94,17 +92,17 @@ ratatui = { version = "0.29.0", default-features = false, features = [
 ] }
 ansi-parser = "0.9.0"
 
-probe-rs = { version = "0.29.0", path = "../probe-rs" }
+probe-rs = { version = "0.30.0", path = "../probe-rs" }
 parking_lot = "0.12.2"
 cargo-config2 = "0.1.26"
 clap_complete = "4.5.2"
 regex = "1.10.4"
-zip = { version = "4.0.0", default-features = false, features = [
+zip = { version = "5.0.0", default-features = false, features = [
     "deflate",
     "time",
 ] }
 urlencoding = "2"
-probe-rs-debug = { version = "0.29.0", path = "../probe-rs-debug" }
+probe-rs-debug = { version = "0.30.0", path = "../probe-rs-debug" }
 probe-rs-target = { workspace = true }
 svg = "0.18"
 
@@ -116,11 +114,11 @@ rustls = { version = "0.23", default-features = false, features = [
     "std",
     "ring",
 ], optional = true }
-tokio-tungstenite = { version = "0.27", features = [
+tokio-tungstenite = { version = "0.28", features = [
     "rustls-tls-webpki-roots",
 ], optional = true }
 axum = { version = "0.8", features = ["ws"], optional = true }
-axum-extra = { version = "0.10", features = ["typed-header"], optional = true }
+axum-extra = { version = "0.12", features = ["typed-header"], optional = true }
 tempfile = { version = "3.0", optional = true }
 postcard = { version = "1.0", features = ["use-std"] }
 postcard-rpc = { version = "0.11.8", features = ["use-std"] }

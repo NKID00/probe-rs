@@ -69,7 +69,7 @@ pub(crate) struct SessionData {
 }
 
 impl SessionData {
-    pub(crate) async fn new(
+    pub(crate) fn new(
         registry: &mut Registry,
         lister: &Lister,
         config: &mut configuration::SessionConfig,
@@ -78,7 +78,7 @@ impl SessionData {
         let target_selector = TargetSelector::from(config.chip.as_deref());
 
         let options = config.probe_options().load(registry)?;
-        let target_probe = options.attach_probe(lister).await?;
+        let target_probe = options.attach_probe(lister)?;
         let mut target_session = options
             .attach_session(target_probe, target_selector)
             .map_err(|operation_error| {
@@ -105,11 +105,7 @@ impl SessionData {
         // Change the current working directory if `config.cwd` is `Some(T)`.
         if let Some(new_cwd) = config.cwd.clone() {
             set_current_dir(new_cwd.as_path()).map_err(|err| {
-                anyhow!(
-                    "Failed to set current working directory to: {:?}, {:?}",
-                    new_cwd,
-                    err
-                )
+                anyhow!("Failed to set current working directory to: {new_cwd:?}, {err:?}")
             })?;
         };
 
@@ -368,22 +364,21 @@ impl SessionData {
             // the core will be resumed, so we need to update the status.
             // If the command is not handled, the core will remain halted and we
             // need to notify the UI.
-            if current_core_status != previous_core_status {
-                if let CoreStatus::Halted(HaltReason::Breakpoint(BreakpointCause::Semihosting(
+            if current_core_status != previous_core_status
+                && let CoreStatus::Halted(HaltReason::Breakpoint(BreakpointCause::Semihosting(
                     command,
                 ))) = current_core_status
-                {
-                    current_core_status = target_core.handle_semihosting(debug_adapter, command)?;
+            {
+                current_core_status = target_core.handle_semihosting(debug_adapter, command)?;
 
-                    if current_core_status.is_halted() {
-                        // poll_core did not notify about the halt, so we need to do it manually.
-                        target_core.notify_halted(debug_adapter, current_core_status)?;
-                    } else {
-                        // If the semihosting command was handled, we do not need to suggest a delay.
-                        suggest_delay_required = false;
-                    }
-                    target_core.core_data.last_known_status = current_core_status;
+                if current_core_status.is_halted() {
+                    // poll_core did not notify about the halt, so we need to do it manually.
+                    target_core.notify_halted(debug_adapter, current_core_status)?;
+                } else {
+                    // If the semihosting command was handled, we do not need to suggest a delay.
+                    suggest_delay_required = false;
                 }
+                target_core.core_data.last_known_status = current_core_status;
             }
 
             // If the core is running, we set the flag to indicate that at least one core is not halted.

@@ -236,24 +236,21 @@ impl Session {
             }
         }
 
-        if let Some(jtag) = target.jtag.as_ref() {
-            if let Some(scan_chain) = jtag.scan_chain.clone() {
-                if let Some(probe) = probe.try_as_jtag_probe() {
-                    probe.set_scan_chain(&scan_chain)?;
-                }
-            }
+        if let Some(jtag) = target.jtag.as_ref()
+            && let Some(scan_chain) = jtag.scan_chain.clone()
+            && let Some(probe) = probe.try_as_jtag_probe()
+        {
+            probe.set_scan_chain(&scan_chain)?;
         }
 
         probe.attach_to_unspecified()?;
-        if probe.protocol() == Some(WireProtocol::Jtag) {
-            if let Some(probe) = probe.try_as_jtag_probe() {
-                if let Ok(chain) = probe.scan_chain() {
-                    if !chain.is_empty() {
-                        for core in &cores {
-                            probe.select_target(core.jtag_tap_index())?;
-                        }
-                    }
-                }
+        if probe.protocol() == Some(WireProtocol::Jtag)
+            && let Some(probe) = probe.try_as_jtag_probe()
+            && let Ok(chain) = probe.scan_chain()
+            && !chain.is_empty()
+        {
+            for core in &cores {
+                probe.select_target(core.jtag_tap_index())?;
             }
         }
 
@@ -313,6 +310,12 @@ impl Session {
                 drop(reset_hardware_deassert);
             }
 
+            // Now that hardware reset is de-asserted, for each core, setup debugging.
+            // (Some chips keep cores in power-down under hardware-reset.)
+            for core in &cores {
+                core.enable_arm_debug(&mut *interface)?;
+            }
+
             let mut session = Session {
                 target,
                 interfaces: ArchitectureInterface::Arm(interface, riscv_state_map),
@@ -336,6 +339,11 @@ impl Session {
 
             Ok(session)
         } else {
+            // For each core, setup debugging
+            for core in &cores {
+                core.enable_arm_debug(&mut *interface)?;
+            }
+
             Ok(Session {
                 target,
                 interfaces: ArchitectureInterface::Arm(interface, riscv_state_map),
@@ -355,12 +363,11 @@ impl Session {
         // While we still don't support mixed architectures
         // (they'd need per-core debug sequences), we can at least
         // handle most of the setup in the same way.
-        if let Some(jtag) = target.jtag.as_ref() {
-            if let Some(scan_chain) = jtag.scan_chain.clone() {
-                if let Some(probe) = probe.try_as_jtag_probe() {
-                    probe.set_scan_chain(&scan_chain)?;
-                }
-            }
+        if let Some(jtag) = target.jtag.as_ref()
+            && let Some(scan_chain) = jtag.scan_chain.clone()
+            && let Some(probe) = probe.try_as_jtag_probe()
+        {
+            probe.set_scan_chain(&scan_chain)?;
         }
 
         probe.attach_to_unspecified()?;
@@ -433,19 +440,6 @@ impl Session {
             configured_trace_sink: None,
         };
 
-        // Wait for the cores to be halted.
-        for core_id in 0..session.cores.len() {
-            match session.core(core_id) {
-                Ok(mut core) => {
-                    if !core.core_halted()? {
-                        core.halt(Duration::from_millis(100))?;
-                    }
-                }
-                Err(Error::CoreDisabled(i)) => tracing::debug!("Core {i} is disabled"),
-                Err(error) => return Err(error),
-            }
-        }
-
         // Connect to the cores
         match session.target.debug_sequence.clone() {
             DebugSequence::Xtensa(_) => {}
@@ -462,11 +456,11 @@ impl Session {
     }
 
     /// Automatically open a probe with the given session config.
-    async fn auto_probe(session_config: &SessionConfig) -> Result<Probe, Error> {
+    fn auto_probe(session_config: &SessionConfig) -> Result<Probe, Error> {
         // Get a list of all available debug probes.
         let lister = Lister::new();
 
-        let probes = lister.list_all().await;
+        let probes = lister.list_all();
 
         // Use the first probe found.
         let mut probe = probes
@@ -489,28 +483,28 @@ impl Session {
 
     /// Automatically creates a session with the first connected probe found.
     #[tracing::instrument(skip(target))]
-    pub async fn auto_attach(
+    pub fn auto_attach(
         target: impl Into<TargetSelector>,
         session_config: SessionConfig,
     ) -> Result<Session, Error> {
         // Attach to a chip.
-        Self::auto_probe(&session_config)
-            .await?
-            .attach(target, session_config.permissions)
+        Self::auto_probe(&session_config)?.attach(target, session_config.permissions)
     }
 
     /// Automatically creates a session with the first connected probe found
     /// using the registry that was provided.
     #[tracing::instrument(skip(target, registry))]
-    pub async fn auto_attach_with_registry(
+    pub fn auto_attach_with_registry(
         target: impl Into<TargetSelector>,
         session_config: SessionConfig,
         registry: &Registry,
     ) -> Result<Session, Error> {
         // Attach to a chip.
-        Self::auto_probe(&session_config)
-            .await?
-            .attach_with_registry(target, session_config.permissions, registry)
+        Self::auto_probe(&session_config)?.attach_with_registry(
+            target,
+            session_config.permissions,
+            registry,
+        )
     }
 
     /// Lists the available cores with their number and their type.

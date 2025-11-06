@@ -117,7 +117,7 @@ pub struct CoreRegister {
 
 impl PartialOrd for CoreRegister {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.id.cmp(&other.id))
+        Some(self.cmp(other))
     }
 }
 
@@ -599,6 +599,20 @@ impl CoreRegisters {
             .iter()
             .find(|r| r.register_has_role(RegisterRole::FloatingPointStatus))
             .cloned()
+    }
+
+    /// Returns an iterator over the descriptions of all the registers of this core.
+    pub fn fpu_status_registers(&self) -> Option<impl Iterator<Item = &CoreRegister>> {
+        let mut fpu_registers = self
+            .0
+            .iter()
+            .filter(|r| r.register_has_role(RegisterRole::FloatingPointStatus))
+            .peekable();
+        if fpu_registers.peek().is_some() {
+            Some(fpu_registers.cloned())
+        } else {
+            None
+        }
     }
 
     /// Returns an iterator over the descriptions of all the registers of this core.

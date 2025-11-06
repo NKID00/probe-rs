@@ -45,7 +45,7 @@ impl<'probe> RiscvInterfaceBuilder<'probe> for JtagDtmBuilder<'probe> {
         let dtm_state = DtmState::default();
 
         // We don't specify a memory access method here.
-        RiscvDebugInterfaceState::new(Box::new(dtm_state), None)
+        RiscvDebugInterfaceState::new(Box::new(dtm_state))
     }
 
     fn attach<'state>(

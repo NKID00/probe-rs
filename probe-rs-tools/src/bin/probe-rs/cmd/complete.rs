@@ -26,17 +26,17 @@ pub struct Cmd {
 
 impl Cmd {
     /// Run the correct subcommand.
-    pub async fn run(&self, lister: &Lister) -> Result<()> {
+    pub fn run(&self, lister: &Lister) -> Result<()> {
         let shell = Shell::from_env()
             .or(self.shell)
             .ok_or_else(|| anyhow!("The current shell could not be determined. Please specify a shell with the --shell argument."))?;
 
         match &self.kind {
-            CompleteKind::Install => {
-                self.install(shell)?;
+            CompleteKind::Install { manual } => {
+                self.install(shell, *manual)?;
             }
             CompleteKind::ProbeList { input } => {
-                self.probe_list(lister, input).await?;
+                self.probe_list(lister, input)?;
             }
             CompleteKind::ChipList { input } => {
                 self.chips_list(input)?;
@@ -50,7 +50,7 @@ impl Cmd {
     ///
     /// If the shell cannot be determined or the auto-install is not implemented yet,
     /// the function prints the script with instructions for the user.
-    pub fn install(&self, shell: Shell) -> Result<()> {
+    pub fn install(&self, shell: Shell, manual: bool) -> Result<()> {
         let mut command = <Cli as CommandFactory>::command();
         let path: PathBuf = std::env::args_os().next().unwrap().into();
         let name = path.file_name().unwrap().to_str().unwrap();
@@ -61,6 +61,11 @@ impl Cmd {
         inject_dynamic_completions(shell, name, &mut script)?;
 
         let file_name = shell.file_name(BIN_NAME);
+
+        if manual {
+            println!("{script}");
+            return Ok(());
+        }
 
         match shell {
             Shell::Zsh => {
@@ -83,8 +88,8 @@ impl Cmd {
     }
 
     /// List all the found probes in a format the shell autocompletion understands.
-    async fn probe_list(&self, lister: &Lister, input: &str) -> Result<()> {
-        println!("{}", list_probes(lister, input).await?);
+    fn probe_list(&self, lister: &Lister, input: &str) -> Result<()> {
+        println!("{}", list_probes(lister, input)?);
         Ok(())
     }
 
@@ -99,7 +104,14 @@ impl Cmd {
 #[clap(verbatim_doc_comment)]
 pub enum CompleteKind {
     /// Installs the autocomplete script for the correct shell.
-    Install,
+    Install {
+        /// Just print the script to stdout if this flag is active.
+        ///
+        /// This is useful for packaging probe-rs for installers that have their
+        /// own autocomplete packaging mechanisms.
+        #[clap(short, long)]
+        manual: bool,
+    },
     /// Lists the probes that are currently plugged in in a way that the shell understands.
     ProbeList {
         /// The already entered user input that will be used to filter the list.
@@ -133,9 +145,9 @@ pub fn list_chips(starts_with: &str) -> Result<String> {
 /// This are all the probes that are currently connected.
 ///
 /// Output will be one line per probe and print the PID:VID:SERIAL and the full name.
-pub async fn list_probes(lister: &Lister, starts_with: &str) -> Result<String> {
+pub fn list_probes(lister: &Lister, starts_with: &str) -> Result<String> {
     let mut output = String::new();
-    let probes = lister.list_all().await;
+    let probes = lister.list_all();
     for probe in probes {
         if probe.identifier.starts_with(starts_with) {
             writeln!(
@@ -253,26 +265,26 @@ impl ShellExt for Zsh {
         use std::io::Write;
 
         // Check if .zfunc is in FPATH
-        if let Ok(fpath) = std::env::var("FPATH") {
-            if !fpath.split(':').any(|p| p == path.to_str().unwrap()) {
-                let zshrc_path = dir.home_dir().join(".zshrc");
-                let export_cmd = r#"
+        if let Ok(fpath) = std::env::var("FPATH")
+            && !fpath.split(':').any(|p| p == path.to_str().unwrap())
+        {
+            let zshrc_path = dir.home_dir().join(".zshrc");
+            let export_cmd = r#"
 # Add .zfunc to FPATH for autocompletion
 export FPATH="$HOME/.zfunc:$FPATH"
 "#;
-                let result = std::fs::OpenOptions::new()
-                    .append(true)
-                    .open(&zshrc_path)
-                    .and_then(|mut file| writeln!(file, "{export_cmd}"))
-                    .context("Failed to update .zshrc with FPATH");
+            let result = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&zshrc_path)
+                .and_then(|mut file| writeln!(file, "{export_cmd}"))
+                .context("Failed to update .zshrc with FPATH");
 
-                match result {
-                    Ok(_) => eprintln!("Added .zfunc to FPATH in .zshrc. Please reload your zsh."),
-                    Err(e) => {
-                        eprintln!("Error: {e}");
-                        eprintln!("Please add the following line to your .zshrc manually:");
-                        eprintln!("{export_cmd}");
-                    }
+            match result {
+                Ok(_) => eprintln!("Added .zfunc to FPATH in .zshrc. Please reload your zsh."),
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    eprintln!("Please add the following line to your .zshrc manually:");
+                    eprintln!("{export_cmd}");
                 }
             }
         }
@@ -322,18 +334,17 @@ impl ShellExt for PowerShell {
 }
 
 fn write_script(path: &Path, script: &str) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        if !parent.exists() {
-            if let Err(e) = std::fs::create_dir_all(parent).context("Failed to create directory") {
-                println!("{script}");
-                eprintln!("Creating the parent directories failed: {e}");
-                eprintln!(
-                    "Please create the parent directories and write the above script to {} manually",
-                    path.display()
-                );
-                return Err(e);
-            }
-        }
+    if let Some(parent) = path.parent()
+        && !parent.exists()
+        && let Err(e) = std::fs::create_dir_all(parent).context("Failed to create directory")
+    {
+        println!("{script}");
+        eprintln!("Creating the parent directories failed: {e}");
+        eprintln!(
+            "Please create the parent directories and write the above script to {} manually",
+            path.display()
+        );
+        return Err(e);
     }
 
     let res = std::fs::write(path, script);

@@ -114,12 +114,17 @@ pub fn get_arm_components(
 
     for ap_index in interface.access_ports(dp)? {
         let component = if let Ok(mut memory) = interface.memory_interface(&ap_index) {
-            match memory.base_address()? {
-                0 => Err(Error::Other("AP has a base address of 0".to_string())),
-                debug_base_address => {
-                    let component = Component::try_parse(&mut *memory, debug_base_address)?;
-                    Ok(CoresightComponent::new(component, ap_index.clone()))
+            if let Ok(addr) = memory.base_address() {
+                match addr {
+                    0 => Err(Error::Other("AP has a base address of 0".to_string())),
+                    debug_base_address => {
+                        let component = Component::try_parse(&mut *memory, debug_base_address)?;
+                        Ok(CoresightComponent::new(component, ap_index.clone()))
+                    }
                 }
+            } else {
+                // If the base address is not present then continue to the next entry.
+                continue;
             }
         } else {
             // Return an error, only possible to get Component from MemoryAP
@@ -298,7 +303,7 @@ pub(crate) fn read_trace_memory(
             None => {
                 // If there's nothing available in the FIFO, we can only break out of reading if we
                 // have an integer number of formatted frames, which are 16 bytes each.
-                if (etf_trace.len() % 16) == 0 {
+                if etf_trace.len().is_multiple_of(16) {
                     break;
                 }
             }
@@ -306,7 +311,7 @@ pub(crate) fn read_trace_memory(
 
         // If the FIFO is being filled faster than we can read it, break out after reading a
         // maximum number of frames.
-        let frame_boundary = (etf_trace.len() % 16) == 0;
+        let frame_boundary = etf_trace.len().is_multiple_of(16);
 
         if frame_boundary && etf_trace.len() >= fifo_size as usize {
             break;

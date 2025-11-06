@@ -32,7 +32,6 @@ use probe_rs::{
     probe::list::Lister,
 };
 use std::{
-    cell::RefCell,
     collections::HashMap,
     fs,
     path::Path,
@@ -165,8 +164,7 @@ impl Debugger {
 
         let Some(target_core_config) = self.config.core_configs.get(core_id) else {
             return Err(DebuggerError::Other(anyhow!(
-                "No core configuration found for core id {}",
-                core_id
+                "No core configuration found for core id {core_id}"
             )));
         };
 
@@ -230,8 +228,7 @@ impl Debugger {
                         .send_response::<()>(&request, Ok(None))
                         .map_err(|error| {
                             DebuggerError::Other(anyhow!(
-                                "Could not deserialize arguments for RttWindowOpened : {:?}.",
-                                error
+                                "Could not deserialize arguments for RttWindowOpened : {error:?}."
                             ))
                         })?;
                 }
@@ -255,7 +252,7 @@ impl Debugger {
                 let result = target_core
                     .core
                     .halt(Duration::from_millis(500))
-                    .map_err(|error| anyhow!("Failed to halt core: {}", error))
+                    .map_err(|error| anyhow!("Failed to halt core: {error:?}"))
                     .and(Ok(()));
 
                 debug_session = DebugSessionStatus::Restart(request);
@@ -280,8 +277,7 @@ impl Debugger {
                 debug_adapter.send_response::<()>(
                     &request,
                     Err(&DebuggerError::Other(anyhow!(
-                        "Received request '{}', which is not supported or not implemented yet",
-                        other_command
+                        "Received request '{other_command}', which is not supported or not implemented yet"
                     ))),
                 )
             }
@@ -289,13 +285,10 @@ impl Debugger {
 
         result.map_err(|e| DebuggerError::Other(e.context("Error executing request.")))?;
 
-        if unhalt_me {
-            if let Err(error) = target_core.core.run() {
-                let error =
-                    DebuggerError::Other(anyhow!(error).context("Failed to resume target."));
-                debug_adapter.show_error_message(&error)?;
-                return Err(error);
-            }
+        if unhalt_me && let Err(error) = target_core.core.run() {
+            let error = DebuggerError::Other(anyhow!(error).context("Failed to resume target."));
+            debug_adapter.show_error_message(&error)?;
+            return Err(error);
         }
 
         Ok(debug_session)
@@ -469,7 +462,7 @@ impl Debugger {
         self.config.validate_config_files()?;
 
         let mut session_data =
-            SessionData::new(registry, lister, &mut self.config, self.timestamp_offset).await?;
+            SessionData::new(registry, lister, &mut self.config, self.timestamp_offset)?;
 
         debug_adapter.halt_after_reset = self.config.flashing_config.halt_after_reset;
 
@@ -632,8 +625,6 @@ impl Debugger {
         download_options.do_chip_erase = config.flashing_config.full_chip_erase;
         download_options.verify = config.flashing_config.verify_after_flashing;
 
-        let ref_debug_adapter = RefCell::new(&mut *debug_adapter);
-
         #[derive(Default)]
         struct ProgressBarState {
             total_size: u64,
@@ -642,66 +633,66 @@ impl Debugger {
 
         type ProgressState = HashMap<Operation, ProgressBarState>;
 
-        let progress_state = RefCell::new(ProgressState::default());
+        download_options.progress = progress_id
+            .map(|id| {
+                let describe_op = |operation| match Operation::from(operation) {
+                    Operation::Fill => "Reading Old Pages",
+                    Operation::Erase => "Erasing Sectors",
+                    Operation::Program => "Programming Pages",
+                    Operation::Verify => "Verifying",
+                };
+                let mut flash_progress = ProgressState::default();
+                let debug_adapter = &mut *debug_adapter;
+                FlashProgress::new(move |event| {
+                    match event {
+                        ProgressEvent::AddProgressBar { operation, total } => {
+                            let pbar_state = flash_progress.entry(operation.into()).or_default();
+                            if let Some(total) = total {
+                                pbar_state.total_size += total; // should this be an assignment instead?
+                                pbar_state.size_done = 0;
+                            };
+                        }
+                        ProgressEvent::Started(operation) => {
+                            debug_adapter
+                                .update_progress(None, Some(describe_op(operation)), id)
+                                .ok();
+                        }
+                        ProgressEvent::Progress {
+                            operation, size, ..
+                        } => {
+                            let pbar_state = flash_progress.entry(operation.into()).or_default();
+                            pbar_state.size_done += size;
+                            let progress =
+                                pbar_state.size_done as f64 / pbar_state.total_size as f64;
 
-        download_options.progress = progress_id.map(|id| {
-            let describe_op = |operation| match Operation::from(operation) {
-                Operation::Fill => "Reading Old Pages",
-                Operation::Erase => "Erasing Sectors",
-                Operation::Program => "Programming Pages",
-                Operation::Verify => "Verifying",
-            };
-
-            FlashProgress::new(move |event| {
-                let mut flash_progress = progress_state.borrow_mut();
-                let mut debug_adapter = ref_debug_adapter.borrow_mut();
-                match event {
-                    ProgressEvent::AddProgressBar { operation, total } => {
-                        let pbar_state = flash_progress.entry(operation.into()).or_default();
-                        if let Some(total) = total {
-                            pbar_state.total_size += total; // should this be an assignment instead?
-                            pbar_state.size_done = 0;
-                        };
+                            debug_adapter
+                                .update_progress(Some(progress), Some(describe_op(operation)), id)
+                                .ok();
+                        }
+                        ProgressEvent::Failed(operation) => {
+                            debug_adapter
+                                .update_progress(
+                                    Some(1.0),
+                                    Some(format!("{} Failed!", describe_op(operation))),
+                                    id,
+                                )
+                                .ok();
+                        }
+                        ProgressEvent::Finished(operation) => {
+                            debug_adapter
+                                .update_progress(
+                                    Some(1.0),
+                                    Some(format!("{} Complete!", describe_op(operation))),
+                                    id,
+                                )
+                                .ok();
+                        }
+                        ProgressEvent::FlashLayoutReady { .. } => {}
+                        ProgressEvent::DiagnosticMessage { .. } => {}
                     }
-                    ProgressEvent::Started(operation) => {
-                        debug_adapter
-                            .update_progress(None, Some(describe_op(operation)), id)
-                            .ok();
-                    }
-                    ProgressEvent::Progress {
-                        operation, size, ..
-                    } => {
-                        let pbar_state = flash_progress.entry(operation.into()).or_default();
-                        pbar_state.size_done += size;
-                        let progress = pbar_state.size_done as f64 / pbar_state.total_size as f64;
-
-                        debug_adapter
-                            .update_progress(Some(progress), Some(describe_op(operation)), id)
-                            .ok();
-                    }
-                    ProgressEvent::Failed(operation) => {
-                        debug_adapter
-                            .update_progress(
-                                Some(1.0),
-                                Some(format!("{} Failed!", describe_op(operation))),
-                                id,
-                            )
-                            .ok();
-                    }
-                    ProgressEvent::Finished(operation) => {
-                        debug_adapter
-                            .update_progress(
-                                Some(1.0),
-                                Some(format!("{} Complete!", describe_op(operation))),
-                                id,
-                            )
-                            .ok();
-                    }
-                    ProgressEvent::FlashLayoutReady { .. } => {}
-                    ProgressEvent::DiagnosticMessage { .. } => {}
-                }
+                })
             })
-        });
+            .unwrap_or_default();
 
         let result = match build_loader(
             &mut session_data.session,
@@ -711,13 +702,7 @@ impl Debugger {
         ) {
             Ok(loader) => {
                 let do_flashing = if config.flashing_config.verify_before_flashing {
-                    match loader.verify(
-                        &mut session_data.session,
-                        download_options
-                            .progress
-                            .clone()
-                            .unwrap_or_else(FlashProgress::empty),
-                    ) {
+                    match loader.verify(&mut session_data.session, &mut download_options.progress) {
                         Ok(_) => false,
                         Err(FlashError::Verify) => true,
                         Err(other) => {
@@ -792,13 +777,13 @@ impl Debugger {
             get_arguments::<InitializeRequestArguments, _>(debug_adapter, &initialize_request)?;
 
         // Enable quirks specific to particular DAP clients...
-        if let Some(client_id) = initialize_arguments.client_id {
-            if client_id == "vscode" {
-                tracing::info!(
-                    "DAP client reports its 'ClientID' is 'vscode', enabling vscode_quirks."
-                );
-                debug_adapter.vscode_quirks = true;
-            }
+        if let Some(client_id) = initialize_arguments.client_id
+            && client_id == "vscode"
+        {
+            tracing::info!(
+                "DAP client reports its 'ClientID' is 'vscode', enabling vscode_quirks."
+            );
+            debug_adapter.vscode_quirks = true;
         }
 
         if !(initialize_arguments.columns_start_at_1.unwrap_or(true)
@@ -1113,7 +1098,7 @@ mod test {
             RequestBuilder { adapter: self }
         }
 
-        fn expect_response(&mut self, response: Response) -> ResponseBuilder {
+        fn expect_response(&mut self, response: Response) -> ResponseBuilder<'_> {
             assert!(
                 response.success,
                 "success field must be true for succesful response"
@@ -1122,7 +1107,7 @@ mod test {
             ResponseBuilder { adapter: self }
         }
 
-        fn expect_error_response(&mut self, response: Response) -> ResponseBuilder {
+        fn expect_error_response(&mut self, response: Response) -> ResponseBuilder<'_> {
             assert!(
                 !response.success,
                 "success field must be false for error response"
@@ -1315,7 +1300,7 @@ mod test {
 
         let lister = TestLister::new();
         if with_probe {
-            lister.probes.lock().await.push(fake_probe());
+            lister.probes.borrow_mut().push(fake_probe());
         }
         let lister = Lister::with_lister(Box::new(lister));
 

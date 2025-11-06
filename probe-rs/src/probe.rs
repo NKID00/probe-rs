@@ -31,7 +31,7 @@ use bitvec::vec::BitVec;
 use common::ScanChainError;
 use nusb::DeviceInfo;
 use probe_rs_target::ScanChainElement;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt;
@@ -279,13 +279,10 @@ impl<T: ProbeError> From<T> for ProbeCreationError {
 /// ```no_run
 /// use probe_rs::probe::{Probe, list::Lister};
 ///
-/// # async_io::block_on(async {
-///
 /// let lister = Lister::new();
 ///
-/// let probe_list = lister.list_all().await;
+/// let probe_list = lister.list_all();
 /// let probe = probe_list[0].open();
-/// # });
 /// ```
 #[derive(Debug)]
 pub struct Probe {
@@ -900,7 +897,7 @@ pub enum DebugProbeSelectorParseError {
 /// assert_eq!(selector.vendor_id, 0x1942);
 /// assert_eq!(selector.product_id, 0x1337);
 /// ```
-#[derive(Debug, Clone, Serialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DebugProbeSelector {
     /// The the USB vendor id of the debug probe to be used.
     pub vendor_id: u16,
@@ -1021,6 +1018,15 @@ impl fmt::Display for DebugProbeSelector {
 impl From<DebugProbeSelector> for String {
     fn from(value: DebugProbeSelector) -> String {
         value.to_string()
+    }
+}
+
+impl Serialize for DebugProbeSelector {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
     }
 }
 
@@ -1390,13 +1396,13 @@ pub trait JtagAccess: DebugProbe {
 /// A raw JTAG bit sequence.
 pub struct JtagSequence {
     /// TDO capture
-    pub(crate) tdo_capture: bool,
+    pub tdo_capture: bool,
 
     /// TMS value
-    pub(crate) tms: bool,
+    pub tms: bool,
 
     /// Data to generate on TDI
-    pub(crate) data: BitVec,
+    pub data: BitVec,
 }
 
 /// A low-level JTAG register write command.
