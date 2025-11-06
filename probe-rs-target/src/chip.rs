@@ -228,8 +228,7 @@ pub struct RiscvCoreAccessOptions {
 /// RISCV Debug Transport Module
 ///
 /// This is used to access the debug module
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RiscvDtm {
     /// The JTAG debug transport module from the RISCV debug specification
     #[default]
@@ -240,7 +239,6 @@ pub enum RiscvDtm {
         ap: ApAddress,
     },
 }
-
 
 impl RiscvDtm {
     /// Get the optional AP address

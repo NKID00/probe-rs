@@ -43,7 +43,7 @@ impl<'probe> RiscvInterfaceBuilder<'probe> for AdiDtmBuilder<'probe> {
 
         state.offset = self.offset.unwrap_or(0);
 
-        RiscvDebugInterfaceState::new(Box::new(state), Some(MemoryAccessMethod::Dtm))
+        RiscvDebugInterfaceState::new(Box::new(state), Some(MemoryAccessMethod::SystemBus))
     }
 
     fn attach<'state>(

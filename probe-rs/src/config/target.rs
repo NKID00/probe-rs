@@ -118,13 +118,27 @@ impl Target {
             flash_algorithms.push(algo);
         }
 
+        // TODO: Make it possible to specify the debug interface
+
+        let debug_interface = match &chip.cores[0].core_access_options {
+            probe_rs_target::CoreAccessOptions::Arm(_) => DebugInterface::ArmDebugInterface,
+            probe_rs_target::CoreAccessOptions::Riscv(riscv_core_access_options) => {
+                match riscv_core_access_options.dtm {
+                    Some(RiscvDtm::ArmDebug { .. }) => DebugInterface::ArmDebugInterface,
+                    _ => DebugInterface::RiscvDtm,
+                }
+            }
+            probe_rs_target::CoreAccessOptions::Xtensa(_) => DebugInterface::Xtensa,
+        };
+
         let debug_sequence = crate::vendor::try_create_debug_sequence(chip).unwrap_or_else(|| {
-            // Default to the architecture of the first core, which is okay if
-            // there is no mixed architectures.
-            match chip.cores[0].core_type.architecture() {
-                Architecture::Arm => DebugSequence::Arm(DefaultArmSequence::create()),
-                Architecture::Riscv => DebugSequence::Riscv(DefaultRiscvSequence::create()),
-                Architecture::Xtensa => DebugSequence::Xtensa(DefaultXtensaSequence::create()),
+            // Default to the debug interface.
+            match debug_interface {
+                DebugInterface::ArmDebugInterface => {
+                    DebugSequence::Arm(DefaultArmSequence::create())
+                }
+                DebugInterface::RiscvDtm => DebugSequence::Riscv(DefaultRiscvSequence::create()),
+                DebugInterface::Xtensa => DebugSequence::Xtensa(DefaultXtensaSequence::create()),
             }
         });
 
@@ -134,34 +148,6 @@ impl Target {
             Some(ranges) => ScanRegion::Ranges(ranges.clone()),
             None => ScanRegion::Ram, // By default we use all of the RAM ranges from the memory map.
         };
-
-        // TODO: Make it possible to specify the debug interface
-
-        let debug_interface = match chip.cores[0].core_type.architecture() {
-            Architecture::Arm => DebugInterface::ArmDebugInterface,
-            Architecture::Riscv => DebugInterface::RiscvDtm,
-            Architecture::Xtensa => DebugInterface::Xtensa,
-        };
-
-        for core in &chip.cores {
-            let expected_debug_interface = match &core.core_access_options {
-                probe_rs_target::CoreAccessOptions::Arm(_) => DebugInterface::ArmDebugInterface,
-                probe_rs_target::CoreAccessOptions::Riscv(riscv_core_access_options) => {
-                    match riscv_core_access_options.dtm {
-                        Some(RiscvDtm::ArmDebug { .. }) => DebugInterface::ArmDebugInterface,
-                        _ => DebugInterface::RiscvDtm,
-                    }
-                }
-                probe_rs_target::CoreAccessOptions::Xtensa(_) => DebugInterface::Xtensa,
-            };
-
-            // TODO: Better check
-            assert_eq!(
-                debug_interface, expected_debug_interface,
-                "Core {} does not support debug interface {:?}",
-                core.name, debug_interface
-            )
-        }
 
         Target {
             name: chip.name.clone(),
@@ -312,7 +298,20 @@ impl CoreExt for Core {
                     }
                 })
             }
-            probe_rs_target::CoreAccessOptions::Riscv(_) => None,
+            probe_rs_target::CoreAccessOptions::Riscv(options) => {
+                if let Some(dtm) = &options.dtm
+                    && let Some(ap) = dtm.ap()
+                {
+                    match ap {
+                        probe_rs_target::ApAddress::V1(ap) => {
+                            Some(FullyQualifiedApAddress::v1_with_default_dp(*ap))
+                        }
+                        _ => unimplemented!(),
+                    }
+                } else {
+                    None
+                }
+            }
             probe_rs_target::CoreAccessOptions::Xtensa(_) => None,
         }
     }
