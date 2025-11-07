@@ -43,7 +43,7 @@ where
     /// Read a 64bit word of at `address`.
     ///
     /// The address where the read should be performed at has to be a multiple of 8.
-    /// Returns `AccessPortError::MemoryNotAligned` if this does not hold true.
+    /// Returns [`Error::MemoryNotAligned`] if this does not hold true.
     fn read_word_64(&mut self, address: u64) -> Result<u64, ERR> {
         let mut word = 0;
         self.read_64(address, std::slice::from_mut(&mut word))?;
