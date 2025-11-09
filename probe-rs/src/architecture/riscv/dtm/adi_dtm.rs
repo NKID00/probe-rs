@@ -6,7 +6,11 @@
 use crate::{
     MemoryInterface,
     architecture::{
-        arm::{ArmError, memory::ArmMemoryInterface},
+        arm::{
+            ArmError,
+            ap::{AddressIncrement, ApRegister, CSW, DRW, TAR},
+            memory::ArmMemoryInterface,
+        },
         riscv::{
             communication_interface::{
                 RiscvCommunicationInterface, RiscvDebugInterfaceState, RiscvError,
@@ -40,21 +44,18 @@ impl<'probe> AdiDtmBuilder<'probe> {
 impl<'probe> RiscvInterfaceBuilder<'probe> for AdiDtmBuilder<'probe> {
     fn create_state(&self) -> RiscvDebugInterfaceState {
         let mut state = DtmState::default();
-
         state.offset = self.offset.unwrap_or(0);
-
         RiscvDebugInterfaceState::new(Box::new(state))
     }
 
     fn attach<'state>(
         self: Box<Self>,
         state: &'state mut RiscvDebugInterfaceState,
-    ) -> Result<RiscvCommunicationInterface<'state>, crate::probe::DebugProbeError>
+    ) -> Result<RiscvCommunicationInterface<'state>, DebugProbeError>
     where
         'probe: 'state,
     {
         let dtm_state = state.dtm_state.downcast_mut::<DtmState>().unwrap();
-
         Ok(RiscvCommunicationInterface::new(
             Box::new(AdiDtm::new(self.probe, dtm_state)),
             &mut state.interface_state,
@@ -65,6 +66,18 @@ impl<'probe> RiscvInterfaceBuilder<'probe> for AdiDtmBuilder<'probe> {
 enum Command {
     Read(DmAddress),
     Write(DmAddress, u32),
+}
+
+impl Command {
+    /// Map DmAddress to ArmMemoryInterface address.
+    /// The ArmMemoryInterface is byte addressed, while the DmAddress is word addressed.
+    fn map_addr(&self, offset: u64) -> u32 {
+        let address = match self {
+            Command::Read(address) => address,
+            Command::Write(address, _) => address,
+        };
+        u32::from(address.0 * 4) + offset as u32
+    }
 }
 
 /// Access to the Debug Transport Module (DTM),
@@ -121,13 +134,38 @@ impl DtmAccess for AdiDtm<'_> {
     }
 
     fn execute(&mut self) -> Result<(), RiscvError> {
+        let ap = self.probe.fully_qualified_address();
+        let offset = self.state.offset;
+        let interface = self.probe.get_arm_debug_interface()?;
+
+        // Disable address auto increment
+        let csw = interface
+            .read_raw_ap_register(&ap, CSW::ADDRESS)
+            .map_err(|_| RiscvError::DtmOperationFailed)?
+            .try_into()
+            .map_err(|_| RiscvError::DtmOperationFailed)?;
+        let new_csw = CSW {
+            AddrInc: AddressIncrement::Off,
+            ..csw
+        };
+        interface
+            .write_raw_ap_register(&ap, CSW::ADDRESS, new_csw.into())
+            .map_err(|_| RiscvError::DtmOperationFailed)?;
+
         let cmds = std::mem::take(&mut self.state.queued_cmds);
+        let mut previous_mapped = u32::MAX;
         for (index, cmd) in cmds.iter() {
+            let mapped = cmd.map_addr(offset);
+            if previous_mapped != mapped {
+                interface
+                    .write_raw_ap_register(&ap, TAR::ADDRESS, mapped)
+                    .map_err(|_| RiscvError::DtmOperationFailed)?;
+                previous_mapped = mapped;
+            }
             match cmd {
                 Command::Read(address) => {
-                    let value = self
-                        .probe
-                        .read_word_32(self.map_addr(*address))
+                    let value = interface
+                        .read_raw_ap_register(&ap, DRW::ADDRESS)
                         .map_err(|e| RiscvError::DmReadFailed {
                             address: address.0,
                             source: Box::new(e),
@@ -135,8 +173,8 @@ impl DtmAccess for AdiDtm<'_> {
                     self.state.result_set.push(index, CommandResult::U32(value));
                 }
                 Command::Write(address, value) => {
-                    self.probe
-                        .write_word_32(self.map_addr(*address), *value)
+                    interface
+                        .write_raw_ap_register(&ap, DRW::ADDRESS, *value)
                         .map_err(|e| RiscvError::DmWriteFailed {
                             address: address.0,
                             source: Box::new(e),
@@ -144,6 +182,11 @@ impl DtmAccess for AdiDtm<'_> {
                 }
             }
         }
+
+        // Restore CSW
+        interface
+            .write_raw_ap_register(&ap, CSW::ADDRESS, csw.into())
+            .map_err(|_| RiscvError::DtmOperationFailed)?;
 
         Ok(())
     }
