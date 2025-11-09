@@ -1,0 +1,58 @@
+name: AG32VF303
+variants:
+- name: AG32VF303
+  package_variants:
+  - AG32VF303KCU6
+  - AG32VF303CCT6
+  - AG32VF303VCT6
+  cores:
+  - name: main
+    type: riscv
+    core_access_options: !Riscv
+      hart_id: 0
+      dtm: !ArmDebug
+        ap: !v1 0
+      offset: 0
+  memory_map:
+  - !Ram
+    range:
+      start: 0x20000000
+      end: 0x20020000
+    cores:
+    - main
+  - !Nvm
+    range:
+      start: 0x80000000
+      end: 0x80040000
+    cores:
+    - main
+    access:
+      boot: true
+  flash_algorithms:
+  - ag32-flash
+flash_algorithms:
+- name: ag32-flash
+  description: AG32VF303 flash loader from https://github.com/NKID00/ag32-hal
+  default: true
+  instructions: NwUAIANFhS4VzUERBsYixDcUAEAISEWZEQUIyBMFEAh9FX39CEgTZQUECMiXAAAA54CAHwFFDEjFmQzIskAiREEBgoAFRYKAtwUAIIPFhS6dzUERBsYixDcUAEBIyAhIRZkhBQjIEwUQCH0Vff0ISBNlBQQIyJcAAADngOAaAUUMSMWZDMiyQCJEQQGCgAVFgoA3BQAghUZ9FpFFIwTVLmN+tggBRzcIAAO3BwAgo4TXLoMnyABBdRMFxQ99jSMmqACuBnOwRjBzEEcwM9XFAAWJMe2JRbcWAECISjeX780TB7eatwdnRRN1BQiThzcSGcHcwtjCiEoTdQUgs9XFABnhnMaYxoWJncHChahZE2UVAKjZqEkTZRUAqMmoSXmZqMk3BQBBhUUM2SMkBRA3BQAghUUjBLUuAUWCgJcAAADngKAWeXEG1iLUJtJK0E7OUsxWylrIXsYuircFACCDxYUurc0yiaqJtxoAQNaGiEqhZRNbygCFBU2NiMqFa86EMoRjDwsAEwYAQCKFpoWXAAAA54CACl6U3pR9G+MVC/4TVSoAE3b1PxHOtwUAIJOFBcBtjQoFs4WpAEqVlwAAAOeAoAdWhghK4XW5FW2NCMqXAAAA54BABQFFEaAFRbJQIlSSVAJZ8kliStJKQkuyS0VhgoC3BQAgA8WFLgnFAUUjhAUugoAFRYKAtwYAIIPGhi6ZxhHCroYXAwAAZwCDBAVFgoA3FQBATEWFiYHFDwAAAd2/goC3BgBBBUeYypjGk4cGEIjDN/VLDszDUY3Ix5jLyE4FiQHFDwAAAd2/goAdxmPjtgCuhgFIKoeRzoNHBwCDRQYAY5i3AAUIBQcFBmOEBgHtt8KGNpURwYKAlwAAAOeAgABBEQbGIsQACJcAAADngIABQREGxiLEAAiXAAAA54CAAUERBsYixAAIlwAAAOeAgP4BoAAAAAA=
+  load_address: 0x20000020
+  pc_init: 0x92
+  pc_uninit: 0x1f4
+  pc_program_page: 0x144
+  pc_erase_sector: 0x48
+  pc_erase_all: 0x0
+  pc_verify: 0x20a
+  data_section_offset: 0x2cc
+  flash_properties:
+    address_range:
+      start: 0x80000000
+      end: 0x80040000
+    page_size: 0x1000
+    erased_byte_value: 0xff
+    program_page_timeout: 10000
+    erase_sector_timeout: 1000
+    sectors:
+    - size: 0x1000
+      address: 0x0
+  cores:
+  - main
